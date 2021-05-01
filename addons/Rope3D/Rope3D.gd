@@ -5,36 +5,9 @@ export var width: float = 0.05
 export var segment_length: float = 0.25
 export var segment_mass: float = 2.0
 export var material: Material
-export var node_a: NodePath
-export var node_b: NodePath
+export var attached_to: NodePath
 
-export var bias: float = 0.3 setget set_bias
-export var damping: float = 1.0 setget set_damping
-export var impulse_clamp: float = 0.0 setget set_impulse_clamp
-
-func set_bias(value):
-	bias = value
-	for node in joints:
-		var joint = node as PinJoint
-		if is_instance_valid(joint):
-			joint.set_param(PinJoint.PARAM_BIAS, bias)
-
-func set_damping(value):
-	damping = value
-	for node in joints:
-		var joint = node as PinJoint
-		if is_instance_valid(joint):
-			joint.set_param(PinJoint.PARAM_DAMPING, damping)
-	
-func set_impulse_clamp(value):
-	impulse_clamp = value
-	for node in joints:
-		var joint = node as PinJoint
-		if is_instance_valid(joint):
-			joint.set_param(PinJoint.PARAM_IMPULSE_CLAMP, impulse_clamp)
-	
-	
-var tracking = [] 
+var tracking = []
 var joints = []
 var joint_a: Joint
 var joint_b: Joint
@@ -45,13 +18,12 @@ var normals: PoolVector3Array
 var vertex_uvs: PoolVector2Array
 var mesh_instance: MeshInstance = null
 var mesh: Mesh = null
+var container = null
+var source = self
 
 func _ready():
-	mesh_instance = MeshInstance.new()
-	mesh_instance.set_as_toplevel(true)
-	mesh_instance.material_override = material
-	set_as_toplevel(true)
-	set_physics_process(false)
+	# TODO: Do we ever need the physics container to be anything other than self?
+	container = self
 	if tracking.size() == 0:
 		create_rope()
 
@@ -59,49 +31,56 @@ func _physics_process(_delta):
 	update_rope_geometry()
 
 func create_rope():
+	var target = get_node(attached_to)
+	var physics_object = get_parent_physic_body(source)
+	var target_physics_object = get_parent_physic_body(target)
 	
-	# Both start and end required
-	if !node_a or !node_b:
+	# Check that both have a physics body parent.
+	if !physics_object or !target_physics_object:
 		return
 
-	var na = get_node(node_a)
-	var nb = get_node(node_b)
+	var point_a = source.get_global_transform().origin
+	var point_b = target.get_global_transform().origin
 
-	if !get_parent_physic_body(na) or !get_parent_physic_body(nb):
-		return
-
-	var a = na.get_global_transform().origin
-	var b = nb.get_global_transform().origin
-
-	var number_of_segments = ceil(a.distance_to(b) / segment_length)
-	var dir = a.direction_to(b)
-	var segment_adjusted_length = a.distance_to(b) / number_of_segments
+	var number_of_segments = ceil(point_a.distance_to(point_b) / segment_length)
+	var dir = point_a.direction_to(point_b)
+	var segment_adjusted_length = point_a.distance_to(point_b) / number_of_segments
 	var segment_step = dir * segment_adjusted_length
-	var previous = get_parent_physic_body(na)
-	
+
 	# Rigids are centered, so adjust starting pos to half
-	var segment_pos = a - (segment_step * 0.5)
+	var segment_pos = point_a - (segment_step * 0.5)
+	# TODO: Seems odd but the Joint position starts from the origin position 
+	# of container, but this can change when container != self!
+	var joint_position = Vector3(0, 0, 0)
+	var previous = physics_object
 	
-	# Joint position starts from the position of node a
-	var joint_position = a
+	# Rope starts from source
+	tracking.push_back(self)
+	
 	for _i in range(number_of_segments):
 		segment_pos += segment_step
 		var segment = create_segment(segment_pos, dir)
 		var joint = create_joint(
 			joint_position, 
+			dir,
 			previous.get_path(),
 			segment.get_path()
 		)
 		if !joint_a:
 			joint_a = joint
+
 		joint_position += segment_step
 		previous = segment
 		tracking.push_back(segment)
-
+ 
+	# Rope connects to target
+	tracking.push_back(target)
+	
 	joint_b = create_joint(
 		joint_position, 
+		dir,
 		previous.get_path(),
-		get_parent_physic_body(nb).get_path()
+		target_physics_object.get_path()
 	)
 
 	vertices = PoolVector3Array()
@@ -122,11 +101,15 @@ func create_rope():
 		Vector2(1, 1)
 	]
 	for i in range(tracking.size() * 2):
-		vertices.set(i, Vector3(0, 0, 0))
 		vertex_uvs.set(i, uvs[i % 4])
-	set_physics_process(true)
 	
+	mesh_instance = MeshInstance.new()
 	mesh_instance.mesh = mesh
+	mesh_instance.material_override = material
+	# FIXME: For some reason the translation affects our
+	# mesh even when it is toplevel, so shift it to world origin.
+	mesh_instance.translation = -get_global_transform().origin
+	mesh_instance.set_as_toplevel(true)
 	add_child(mesh_instance)
 
 func get_parent_physic_body(node: Node):
@@ -135,85 +118,39 @@ func get_parent_physic_body(node: Node):
 	return node
 
 func create_segment(global_position: Vector3, global_direction: Vector3):
-	var cylinder = CylinderShape.new()
-	cylinder.height = segment_length
-	cylinder.radius = width
+	var collider = CylinderShape.new()
+	collider.height = segment_length
+	collider.radius = width
+	
 	var shape = CollisionShape.new()
-	shape.shape = cylinder
+	shape.shape = collider
 	shape.rotation_degrees.x = 90
+	
 	var segment = RigidBody.new()
 	segment.set_as_toplevel(true)
 	segment.add_child(shape)
 	segment.mass = segment_mass
-	var up = Vector3(0, 1, 0).cross(global_direction)
-	up = global_direction.cross(up)
-	add_child(segment)
+	# TODO: Make these tweakable!
+	segment.linear_damp = 0
+	segment.angular_damp = 50
+	var up = Vector3(0, 1, 0)
+	container.add_child(segment)
 	segment.look_at_from_position(global_position, global_position + global_direction, up)
 	return segment
 
-func create_joint(global_position: Vector3, a: NodePath, b: NodePath):
+func create_joint(local_position: Vector3, direction: Vector3, a: NodePath, b: NodePath):
 	var joint := PinJoint.new()
-	#Generic6DOFJoint.new()
-
-	joint.set_as_toplevel(true)
-	joint.set_param(PinJoint.PARAM_BIAS, bias)
-	joint.set_param(PinJoint.PARAM_DAMPING, damping)
-	joint.set_param(PinJoint.PARAM_IMPULSE_CLAMP, impulse_clamp)
+# 	TODO: See if Generic6DOFJoint could be used
 #	joint.set_flag_y(Generic6DOFJoint.FLAG_ENABLE_ANGULAR_LIMIT, false)
 #	joint.set_flag_z(Generic6DOFJoint.FLAG_ENABLE_ANGULAR_LIMIT, false)
 #	joint.set_flag_y(Generic6DOFJoint.FLAG_ENABLE_LINEAR_LIMIT, true)
 #	joint.set_flag_z(Generic6DOFJoint.FLAG_ENABLE_LINEAR_LIMIT, true)
-
-#	joint.set_flag_x(Generic6DOFJoint.FLAG_ENABLE_ANGULAR_SPRING, true)
-#	joint.set_flag_y(Generic6DOFJoint.FLAG_ENABLE_ANGULAR_SPRING, true)
-#	joint.set_flag_z(Generic6DOFJoint.FLAG_ENABLE_ANGULAR_SPRING, true)
-
-#	joint.set_param_x(Generic6DOFJoint.PARAM_ANGULAR_SPRING_STIFFNESS, 1.5)
-#	joint.set_param_y(Generic6DOFJoint.PARAM_ANGULAR_SPRING_STIFFNESS, 1.5)
-#	joint.set_param_z(Generic6DOFJoint.PARAM_ANGULAR_SPRING_STIFFNESS, 1.5)
-#
-#	joint.set_param_x(Generic6DOFJoint.PARAM_ANGULAR_SPRING_DAMPING, 0.5)
-#	joint.set_param_y(Generic6DOFJoint.PARAM_ANGULAR_SPRING_DAMPING, 0.5)
-#	joint.set_param_z(Generic6DOFJoint.PARAM_ANGULAR_SPRING_DAMPING, 0.5)
-
-#	joint.set_param_x(Generic6DOFJoint.PARAM_LINEAR_SPRING_STIFFNESS, 20)
-#	joint.set_param_y(Generic6DOFJoint.PARAM_LINEAR_SPRING_STIFFNESS, 20)
-#	joint.set_param_z(Generic6DOFJoint.PARAM_LINEAR_SPRING_STIFFNESS, 20)
-#
-#	joint.set_param_x(Generic6DOFJoint.PARAM_LINEAR_SPRING_DAMPING, 10)
-#	joint.set_param_y(Generic6DOFJoint.PARAM_LINEAR_SPRING_DAMPING, 10)
-#	joint.set_param_z(Generic6DOFJoint.PARAM_LINEAR_SPRING_DAMPING, 10)
-#
-#	joint.set_param_x(Generic6DOFJoint.PARAM_LINEAR_LIMIT_SOFTNESS, softness)
-#	joint.set_param_x(Generic6DOFJoint.PARAM_LINEAR_RESTITUTION, restitution)
-#	joint.set_param_x(Generic6DOFJoint.PARAM_LINEAR_DAMPING, damping)
-#
-#	joint.set_param_y(Generic6DOFJoint.PARAM_LINEAR_LIMIT_SOFTNESS, softness)
-#	joint.set_param_y(Generic6DOFJoint.PARAM_LINEAR_RESTITUTION, restitution)
-#	joint.set_param_y(Generic6DOFJoint.PARAM_LINEAR_DAMPING, damping)
-#
-#	joint.set_param_z(Generic6DOFJoint.PARAM_LINEAR_LIMIT_SOFTNESS, softness)
-#	joint.set_param_z(Generic6DOFJoint.PARAM_LINEAR_RESTITUTION, restitution)
-#	joint.set_param_z(Generic6DOFJoint.PARAM_LINEAR_DAMPING, damping)
-#
-#	joint.set("linear_limit_x/softness", softness)
-#	joint.set("linear_limit_x/restitution", restitution)
-#	joint.set("linear_limit_x/damping", damping)
-#
-#	joint.set("linear_limit_y/softness", softness)
-#	joint.set("linear_limit_y/restitution", restitution)
-#	joint.set("linear_limit_y/damping", damping)
-#
-#	joint.set("linear_limit_z/softness", softness)
-#	joint.set("linear_limit_z/restitution", restitution)
-#	joint.set("linear_limit_z/damping", damping)
-#
-	joint.translation = to_local(global_position)
+	joint.translation = local_position
 	joint.set_node_a(a)
 	joint.set_node_b(b)
+	
+	container.add_child(joint)
 	joints.push_back(joint)
-	add_child(joint)
-
 	return joint
 
 func update_rope_geometry():
