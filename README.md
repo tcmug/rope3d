@@ -10,5 +10,4 @@ Add a rope node and connect it to another node. Currently BOTH need to be (grand
 
 ![Editor](./images/editor.png)
 
-
 ![Screenshot](./images/screenshot.png)
