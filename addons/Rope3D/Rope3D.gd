@@ -26,6 +26,8 @@ func _ready():
 	container = self
 	if tracking.size() == 0:
 		create_rope()
+	# Enable physics only when rope could be generated
+	set_physics_process(tracking.size() > 0)
 
 func _physics_process(_delta):
 	update_rope_geometry()
@@ -140,11 +142,6 @@ func create_segment(global_position: Vector3, global_direction: Vector3):
 
 func create_joint(local_position: Vector3, direction: Vector3, a: NodePath, b: NodePath):
 	var joint := PinJoint.new()
-# 	TODO: See if Generic6DOFJoint could be used
-#	joint.set_flag_y(Generic6DOFJoint.FLAG_ENABLE_ANGULAR_LIMIT, false)
-#	joint.set_flag_z(Generic6DOFJoint.FLAG_ENABLE_ANGULAR_LIMIT, false)
-#	joint.set_flag_y(Generic6DOFJoint.FLAG_ENABLE_LINEAR_LIMIT, true)
-#	joint.set_flag_z(Generic6DOFJoint.FLAG_ENABLE_LINEAR_LIMIT, true)
 	joint.translation = local_position
 	joint.set_node_a(a)
 	joint.set_node_b(b)
