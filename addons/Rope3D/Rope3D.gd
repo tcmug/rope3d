@@ -6,7 +6,11 @@ export var segment_length: float = 0.25
 export var segment_mass: float = 2.0
 export var material: Material
 export var attached_to: NodePath
+export var collision_monitor: bool = false
+export(int, LAYERS_3D_PHYSICS) var collision_layer = 1
+export(int, LAYERS_3D_PHYSICS) var collision_mask = 1
 
+var segment_script = preload("Segment.gd")
 var tracking = []
 var joints = []
 var joint_a: Joint
@@ -68,6 +72,7 @@ func create_rope():
 			previous.get_path(),
 			segment.get_path()
 		)
+
 		if !joint_a:
 			joint_a = joint
 
@@ -138,14 +143,25 @@ func create_segment(global_position: Vector3, global_direction: Vector3):
 	var up = Vector3(0, 1, 0)
 	container.add_child(segment)
 	segment.look_at_from_position(global_position, global_position + global_direction, up)
+	segment.collision_layer = collision_layer
+	segment.collision_mask = collision_mask
+	
+	if collision_monitor:
+		segment.contact_monitor = true
+		segment.contacts_reported = 1
+		segment.set_script(segment_script)
+		segment.connect("body_entered", segment, '_on_body_entered')
+		segment.connect("rope_body_entered", self, '_on_rope_body_entered')
 	return segment
+
+func _on_rope_body_entered(segment, body):
+	pass
 
 func create_joint(local_position: Vector3, direction: Vector3, a: NodePath, b: NodePath):
 	var joint := PinJoint.new()
 	joint.translation = local_position
 	joint.set_node_a(a)
 	joint.set_node_b(b)
-	
 	container.add_child(joint)
 	joints.push_back(joint)
 	return joint
