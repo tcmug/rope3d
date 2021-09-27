@@ -1,6 +1,8 @@
 extends Spatial
 class_name Rope3D
 
+signal rope_body_entered(segment, body)
+
 export var width: float = 0.05
 export var segment_length: float = 0.25
 export var segment_mass: float = 2.0
@@ -69,8 +71,8 @@ func create_rope():
 		var joint = create_joint(
 			joint_position, 
 			dir,
-			previous.get_path(),
-			segment.get_path()
+			previous,
+			segment
 		)
 
 		if !joint_a:
@@ -86,8 +88,8 @@ func create_rope():
 	joint_b = create_joint(
 		joint_position, 
 		dir,
-		previous.get_path(),
-		target_physics_object.get_path()
+		previous,
+		target_physics_object
 	)
 
 	vertices = PoolVector3Array()
@@ -150,20 +152,24 @@ func create_segment(global_position: Vector3, global_direction: Vector3):
 		segment.contact_monitor = true
 		segment.contacts_reported = 1
 		segment.set_script(segment_script)
+		segment.rope = self
 		segment.connect("body_entered", segment, '_on_body_entered')
 		segment.connect("rope_body_entered", self, '_on_rope_body_entered')
+		
 	return segment
 
 func _on_rope_body_entered(segment, body):
-	pass
+	emit_signal('rope_body_entered', segment, body)
 
-func create_joint(local_position: Vector3, direction: Vector3, a: NodePath, b: NodePath):
+func create_joint(local_position: Vector3, direction: Vector3, a: Node, b: Node):
 	var joint := PinJoint.new()
 	joint.translation = local_position
-	joint.set_node_a(a)
-	joint.set_node_b(b)
+	joint.set_node_a(a.get_path())
+	joint.set_node_b(b.get_path())
 	container.add_child(joint)
 	joints.push_back(joint)
+	if a is Rope3DSegment:
+		a.joint = joint
 	return joint
 
 func update_rope_geometry():
