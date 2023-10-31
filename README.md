@@ -4,6 +4,8 @@ WORK IN PROGRESS!!
 
 A simple 3D rope plugin for Godot 3.x.
 
+For Godot 4 version: https://github.com/tcmug/godot_rope3d
+
 ## How to use?
 
 Add a rope node and connect it to another node. Currently BOTH need to be (grand)children of a Physics Body. Tweak width, mass and segment lengths so that it looks and feels good.
